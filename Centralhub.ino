@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include "fis_header.h"
+#include <BlynkSimpleEsp32.h>
 
 // Replace with your network credentials
 char ssid[] = "Prof";
@@ -41,6 +42,13 @@ uint8_t broadcastAddress[] = { 0xa0, 0xa3, 0xb3, 0x2f, 0x93, 0x00 };
 // Array to store actuator commands
 float actuatorCommands[4] = { 0 };  // You might need to adjust the size based on your FIS outputs
 
+// Callback function when data is sent
+void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+  Serial.print("\r\nLast Packet Send Status:\t");
+  Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail"); 
+
+}
+
 // Callback function when data is received
 void OnDataRecv(const esp_now_recv_info_t *mac, const uint8_t *incomingData, int len) {
   memcpy(&sensorData, incomingData, sizeof(sensorData));
@@ -54,7 +62,7 @@ void OnDataRecv(const esp_now_recv_info_t *mac, const uint8_t *incomingData, int
   g_fisInput[1] = sensorData.light;      // Assuming humidity is related to light intensity
   g_fisInput[2] = sensorData.motion;     // Motion
   g_fisInput[3] = sensorData.gas_level;  // Gas Concentration
-  g_fisInput[3] = sensorData.hour;       // Time of Day/Access Frequency
+  g_fisInput[4] = sensorData.hour;       // Time of Day/Access Frequency
   g_fisInput[5] = sensorData.current;    // Energy Consumption
 
   // Evaluate the Fuzzy Inference System
@@ -82,6 +90,7 @@ void setup() {
   Serial.begin(115200);
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, pass);
+  Blynk.begin(auth, ssid, pass);
 
   while (WiFi.status() != WL_CONNECTED) {
   delay(500);
@@ -98,11 +107,13 @@ void setup() {
     Serial.println("Error initializing ESP-NOW");
     return;
   }
+  esp_now_register_send_cb(OnDataSent);
   esp_now_register_recv_cb(OnDataRecv);
 }
 
 // Loop  routine runs over and over again forever : 
 void loop() {
+  Blynk.run();
   delay(10);  // Small delay to avoid overwhelming the ESP32
 }
 
