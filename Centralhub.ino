@@ -1,3 +1,4 @@
+
 #define BLYNK_TEMPLATE_ID "TMPL2_Rjbd6Ir"
 #define BLYNK_TEMPLATE_NAME "Home Automation FYP"
 #define BLYNK_AUTH_TOKEN "QAyM-9jIjv7SjSduBBzaLBxN4ingVKkL"
@@ -9,8 +10,8 @@
 #include <BlynkSimpleEsp32.h>
 
 // Replace with your network credentials
-char ssid[] = "Prof";
-char pass[] = "nzube123";
+char ssid[] = "CHIBS-MIFI";
+char pass[] = "Nzubeblaise1.";
 char auth[] = "QAyM-9jIjv7SjSduBBzaLBxN4ingVKkL";
 
 // Number of inputs to the fuzzy inference system
@@ -31,13 +32,18 @@ typedef struct struct_message {
   int gas_level;
   int hour;
   float current;
+  // Actuator commands
+  float lightCommand;
+  float fanCommand;
+  float alarmCommand;
+  float energyCommand;
 } struct_message;
 
 // Create a struct_message
 struct_message sensorData;
 
 // Peer MAC address of Peripheral ESP32 (replace with actual address)
-uint8_t broadcastAddress[] = { 0xa0, 0xa3, 0xb3, 0x2f, 0x93, 0x00 };
+uint8_t peerAddress[] = { 0xd4, 0x8a, 0xfc, 0x9f, 0x2d, 0xcc };
 
 // Array to store actuator commands
 float actuatorCommands[4] = { 0 };  // You might need to adjust the size based on your FIS outputs
@@ -45,8 +51,7 @@ float actuatorCommands[4] = { 0 };  // You might need to adjust the size based o
 // Callback function when data is sent
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
   Serial.print("\r\nLast Packet Send Status:\t");
-  Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail"); 
-
+  Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
 }
 
 // Callback function when data is received
@@ -69,20 +74,17 @@ void OnDataRecv(const esp_now_recv_info_t *mac, const uint8_t *incomingData, int
   fis_evaluate();
 
   // Assign FIS outputs to actuator commands
-  actuatorCommands[0] = g_fisOutput[0];  // Lights
-  actuatorCommands[1] = g_fisOutput[1];  // Fan
-  actuatorCommands[2] = g_fisOutput[2];  // Alarm
-  actuatorCommands[3] = g_fisOutput[3];  // Energy Management Mode (or your 4th output)
+  sensorData.lightCommand = g_fisOutput[0];  // Lights
+  sensorData.fanCommand = g_fisOutput[1];  // Fan
+  sensorData.alarmCommand = g_fisOutput[2];  // Alarm
+  sensorData.energyCommand = g_fisOutput[3];  // Energy Management Mode
 
   // ... (Assign other FIS outputs to actuatorCommands as needed) ...
-
-  // Send actuator commands to Peripheral ESP32
-  esp_err_t result = esp_now_send(broadcastAddress, (uint8_t*)&actuatorCommands, sizeof(actuatorCommands));
-  if (result == ESP_OK) {
-    Serial.println("Sent actuator commands");
-  } else {
-    Serial.println("Error sending actuator commands");
-  }
+  
+  // Send actuator commands back to the peripheral ESP32
+  esp_err_t result = esp_now_send(peerAddress, (const uint8_t *)&sensorData, sizeof(sensorData));
+  Serial.println(result == ESP_OK ? "Actuator commands sent successfully" : "Error sending actuator commands");
+  
 }
 
 // Setup routine runs once when you press reset:
@@ -101,20 +103,49 @@ void setup() {
   Serial.println("WiFi connected at IP ");
   Serial.print(WiFi.localIP());
 
+  Blynk.begin(auth, ssid, pass); // Initialize Blynk
+
 
   // Initialize ESP-NOW
   if (esp_now_init() != ESP_OK) {
     Serial.println("Error initializing ESP-NOW");
     return;
   }
+
+  // Register callbacks
   esp_now_register_send_cb(OnDataSent);
   esp_now_register_recv_cb(OnDataRecv);
+
+  // Register peer (the peripheral ESP32)
+  esp_now_peer_info_t peerInfo;
+  memcpy(peerInfo.peer_addr, peerAddress, 6);
+  peerInfo.channel = 0;  
+  peerInfo.encrypt = false;
+
+  if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+    Serial.println("Failed to add peer");
+    return;
+  }
 }
 
 // Loop  routine runs over and over again forever : 
 void loop() {
   Blynk.run();
   delay(10);  // Small delay to avoid overwhelming the ESP32
+  /*
+  Serial.print(g_fisOutput[0]);
+  Serial.print(" || ");
+  Serial.print(g_fisOutput[1]);
+  Serial.print(" || ");
+  Serial.print(g_fisOutput[2]);
+  Serial.print(" || ");
+  Serial.println(g_fisOutput[3]);
+  delay(3000);
+  */
+  Blynk.virtualWrite(V17, sensorData.lightCommand);
+  Blynk.virtualWrite(V18, sensorData.fanCommand);
+  Blynk.virtualWrite(V19, sensorData.alarmCommand); 
+  Blynk.virtualWrite(V20, sensorData.energyCommand);
 }
 
 // ... (Rest of your FIS support functions: fis_trimf, fis_trapmf, etc. - unchanged) ...
@@ -192,10 +223,10 @@ FIS_TYPE fis_gMFI0Coeff1[] = { 8.83333, 18, 22 };
 FIS_TYPE fis_gMFI0Coeff2[] = { 21, 29, 35 };
 FIS_TYPE fis_gMFI0Coeff3[] = { 30.8333333333333, 40, 49.1666666666667 };
 FIS_TYPE* fis_gMFI0Coeff[] = { fis_gMFI0Coeff1, fis_gMFI0Coeff2, fis_gMFI0Coeff3 };
-FIS_TYPE fis_gMFI1Coeff1[] = { -284.444444444444, 0, 162.174757281553 };
-FIS_TYPE fis_gMFI1Coeff2[] = { 56.8888888888889, 341.333333333333, 625.777777777778 };
-FIS_TYPE fis_gMFI1Coeff3[] = { 398.222222222222, 682.666666666667, 967.111111111111 };
-FIS_TYPE fis_gMFI1Coeff4[] = { 739.555555555556, 1024, 1308.44444444444 };
+FIS_TYPE fis_gMFI1Coeff1[] = { -1137.5, 0, 449.754 };
+FIS_TYPE fis_gMFI1Coeff2[] = { 227.5, 1365, 2502.5 };
+FIS_TYPE fis_gMFI1Coeff3[] = { 1592.5, 2730, 3867.5 };
+FIS_TYPE fis_gMFI1Coeff4[] = { 3595.55, 4095, 5232.5 };
 FIS_TYPE* fis_gMFI1Coeff[] = { fis_gMFI1Coeff1, fis_gMFI1Coeff2, fis_gMFI1Coeff3, fis_gMFI1Coeff4 };
 FIS_TYPE fis_gMFI2Coeff1[] = { -0.833333333333333, 0, 0.833333333333333 };
 FIS_TYPE fis_gMFI2Coeff2[] = { 0.166666666666667, 1, 1.83333333333333 };
@@ -215,23 +246,23 @@ FIS_TYPE* fis_gMFI5Coeff[] = { fis_gMFI5Coeff1, fis_gMFI5Coeff2, fis_gMFI5Coeff3
 FIS_TYPE** fis_gMFICoeff[] = { fis_gMFI0Coeff, fis_gMFI1Coeff, fis_gMFI2Coeff, fis_gMFI3Coeff, fis_gMFI4Coeff, fis_gMFI5Coeff };
 
 // Coefficients for the Output Member Functions
-FIS_TYPE fis_gMFO0Coeff1[] = { -70.8333333333333, 0, 6.01931330472103 };
-FIS_TYPE fis_gMFO0Coeff2[] = { 2.37124463519313, 45.4184549356223, 96.8562231759657 };
-FIS_TYPE fis_gMFO0Coeff3[] = { 60.3755364806867, 137.714592274678, 225.511444921316 };
-FIS_TYPE fis_gMFO0Coeff4[] = { 211.770386266094, 255, 325.833333333333 };
+FIS_TYPE fis_gMFO0Coeff1[] = { -28.0226, 0, 7.40514 };
+FIS_TYPE fis_gMFO0Coeff2[] = { 5.55556, 33.3333, 61.1111 };
+FIS_TYPE fis_gMFO0Coeff3[] = { 38.8889, 66.6667, 94.4444 };
+FIS_TYPE fis_gMFO0Coeff4[] = { 80.967, 100, 127.778 };
 FIS_TYPE* fis_gMFO0Coeff[] = { fis_gMFO0Coeff1, fis_gMFO0Coeff2, fis_gMFO0Coeff3, fis_gMFO0Coeff4 };
-FIS_TYPE fis_gMFO1Coeff1[] = { -70.8333333333333, 0, 18.0579399141631 };
-FIS_TYPE fis_gMFO1Coeff2[] = { 3.95207439198856, 74.7854077253219, 145.618741058655 };
-FIS_TYPE fis_gMFO1Coeff3[] = { 90.7761087267525, 161.609442060086, 232.442775393419 };
-FIS_TYPE fis_gMFO1Coeff4[] = { 184.166666666667, 255, 325.833333333333 };
+FIS_TYPE fis_gMFO1Coeff1[] = { -27.7778, 0, 9.36353 };
+FIS_TYPE fis_gMFO1Coeff2[] = { 5.55556, 33.3333, 61.1111 };
+FIS_TYPE fis_gMFO1Coeff3[] = { 38.8889, 66.6667, 94.4444 };
+FIS_TYPE fis_gMFO1Coeff4[] = { 72.2222, 100, 127.778 };
 FIS_TYPE* fis_gMFO1Coeff[] = { fis_gMFO1Coeff1, fis_gMFO1Coeff2, fis_gMFO1Coeff3, fis_gMFO1Coeff4 };
 FIS_TYPE fis_gMFO2Coeff1[] = { -0.416666666666667, 0, 0.416666666666667 };
 FIS_TYPE fis_gMFO2Coeff2[] = { 0.0833333333333333, 0.5, 0.916666666666667 };
 FIS_TYPE fis_gMFO2Coeff3[] = { 0.583333333333333, 1, 1.41666666666667 };
 FIS_TYPE* fis_gMFO2Coeff[] = { fis_gMFO2Coeff1, fis_gMFO2Coeff2, fis_gMFO2Coeff3 };
-FIS_TYPE fis_gMFO3Coeff1[] = { -0.416666666666667, 0, 0.416666666666667 };
-FIS_TYPE fis_gMFO3Coeff2[] = { 0.0833333333333333, 0.5, 0.916666666666667 };
-FIS_TYPE fis_gMFO3Coeff3[] = { 0.583333333333333, 1, 1.41666666666667 };
+FIS_TYPE fis_gMFO3Coeff1[] = { -41.6667, 0, 41.6667 };
+FIS_TYPE fis_gMFO3Coeff2[] = { 8.3333, 50, 91.6667 };
+FIS_TYPE fis_gMFO3Coeff3[] = { 58.3333, 100, 141.6667 };
 FIS_TYPE* fis_gMFO3Coeff[] = { fis_gMFO3Coeff1, fis_gMFO3Coeff2, fis_gMFO3Coeff3 };
 FIS_TYPE** fis_gMFOCoeff[] = { fis_gMFO0Coeff, fis_gMFO1Coeff, fis_gMFO2Coeff, fis_gMFO3Coeff };
 
@@ -307,13 +338,13 @@ int* fis_gRO[] = { fis_gRO0, fis_gRO1, fis_gRO2, fis_gRO3, fis_gRO4, fis_gRO5, f
 FIS_TYPE fis_gIMin[] = { 18, 0, 0, 0, 0, 0 };
 
 // Input range Max
-FIS_TYPE fis_gIMax[] = { 40, 1024, 1, 1000, 24, 100 };
+FIS_TYPE fis_gIMax[] = { 40, 4095, 1, 1000, 23, 100 };
 
 // Output range Min
 FIS_TYPE fis_gOMin[] = { 0, 0, 0, 0 };
 
 // Output range Max
-FIS_TYPE fis_gOMax[] = { 255, 255, 1, 1 };
+FIS_TYPE fis_gOMax[] = { 100, 100, 1, 100 };
 
 //***********************************************************************
 // Data dependent support functions for Fuzzy Inference System           
