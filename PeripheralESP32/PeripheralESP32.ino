@@ -13,7 +13,6 @@
 
 #include <BlynkSimpleEsp32.h>
 #include <TimeLib.h>  
-
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 
@@ -49,7 +48,6 @@ DHT dht(DHTPIN, DHTTYPE);
 
 MFRC522DriverPinSimple ss_pin(5); // Configurable, see typical pin layout above.
 MFRC522DriverSPI driver{ss_pin}; // Create SPI driver.
-//MFRC522DriverI2C driver{}; // Create I2C driver.
 MFRC522 rfid{driver};  // Create MFRC522 instance.
 
 const float VREF = 3.3; // Reference voltage of the ESP32
@@ -59,12 +57,9 @@ const float SENSOR_SENSITIVITY = 0.066; //
 const float NO_CURRENT_VOLTAGE = VREF / 2; 
 
 int lockState = 0;  // State of the solenoid lock (true = open, false = closed)
-
 int faceUnlockState = 0;
-
 int doorLockState = 0;  // 0 = locked, 1 = unlocked
 int faceUnlockEnabled = 0;  // 0 = disabled, 1 = enabled
-
 
 BlynkTimer timer;
 
@@ -80,20 +75,16 @@ typedef struct struct_message {
   int gas_level;
   int hour;
   float current;
-  // Add actuator commands here if needed
   float lightCommand;
   float fanCommand;
   float alarmCommand;
   float energyCommand;
-
 } struct_message;
 
-// Create a struct_message 
 struct_message sensorData;
 
 // Peer MAC address of Fuzzy Logic ESP32 (replace with actual address)
-uint8_t peerAddress[] = {0xa0, 0xa3, 0xb3, 0x2f, 0x93, 0x00}; // Replace with the actual MAC address
-
+uint8_t peerAddress[] = {0xa0, 0xa3, 0xb3, 0x2f, 0x93, 0x00};
 
 // Callback function when data is sent
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
@@ -109,8 +100,64 @@ void OnDataRecv(const esp_now_recv_info_t *mac, const uint8_t *incomingData, int
   Serial.printf("Light: %.2f, Fan: %.2f, Alarm: %.2f, Energy: %.2f\n", 
                 sensorData.lightCommand, sensorData.fanCommand, 
                 sensorData.alarmCommand, sensorData.energyCommand);
-  // Control actuators based on received commands (example)
+}
 
+void sendSensorData() {
+  // Read sensor data
+  sensorData.temp = dht.readTemperature();
+  float humidity = dht.readHumidity();
+
+  int lightValue = analogRead(LDR_PIN);
+  sensorData.light = map(lightValue, 0, 4095, 4095, 0);
+  sensorData.motion = digitalRead(MOTION_PIN);
+  sensorData.gas_level = analogRead(GAS_SENSOR_PIN);
+
+  float currentSensorValue = analogRead(CURRENT_SENSOR_PIN);
+  float sensorVoltage = (currentSensorValue * VREF) / ADC_RESOLUTION;
+  sensorData.current = (sensorVoltage - NO_CURRENT_VOLTAGE) * 0.707 / SENSOR_SENSITIVITY;
+
+  float currentSensorValue2 = analogRead(CURRENT_SENSOR_PIN2);
+  // Convert the analog reading to voltage
+  float sensorVoltage2 = (currentSensorValue2 * VREF) / ADC_RESOLUTION;
+  float applianceCurrent2 = (sensorVoltage2 - NO_CURRENT_VOLTAGE) * 0.707 / SENSOR_SENSITIVITY;
+  float appliancePower2 = applianceCurrent2*220;
+
+  float currentSensorValue3 = analogRead(CURRENT_SENSOR_PIN3);
+  // Convert the analog reading to voltage
+  float sensorVoltage3 = (currentSensorValue3 * VREF) / ADC_RESOLUTION;
+  float applianceCurrent3 = (sensorVoltage3 - NO_CURRENT_VOLTAGE) * 0.707 / SENSOR_SENSITIVITY;
+  float appliancePower3 = applianceCurrent3*220;
+
+  sensorData.hour = timeClient.getHours();
+
+  int motionSensorState = digitalRead(MOTION_PIN);  // Read the state of the motion sensor
+  int flameSensorState = digitalRead(FLAME_SENSOR_PIN);
+
+
+  // Send sensor data to Fuzzy Logic ESP32
+  esp_err_t result = esp_now_send(peerAddress, (const uint8_t *) &sensorData, sizeof(sensorData));
+  if (result == ESP_OK) {
+    Serial.println("Sent sensor data");
+  } else {
+    Serial.println("Error sending sensor data");
+  }
+
+  // Update Blynk interface
+  Blynk.virtualWrite(V1, sensorData.temp);
+  Blynk.virtualWrite(V2, sensorData.light);
+  Blynk.virtualWrite(V3, sensorData.current * 220);
+  Blynk.virtualWrite(V4, flameSensorState);
+  Blynk.virtualWrite(V5, humidity);
+  Blynk.virtualWrite(V6, sensorData.gas_level);
+  Blynk.virtualWrite(V8, doorLockState);
+  Blynk.virtualWrite(V10, faceUnlockState);
+  Blynk.virtualWrite(V11, appliancePower2);
+  Blynk.virtualWrite(V12, appliancePower3);
+  Blynk.virtualWrite(V17, sensorData.lightCommand);
+  Blynk.virtualWrite(V18, sensorData.fanCommand);
+  Blynk.virtualWrite(V0, sensorData.alarmCommand);
+  Blynk.virtualWrite(V20, sensorData.energyCommand);
+    
 }
 
 void setup() {
@@ -118,12 +165,10 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, pass);
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
     Serial.print(".");
+    delay(500);  // Keep this for connecting WiFi only
   }
-  Serial.println("");
-
-  Serial.println("WiFi connected at IP ");
+  Serial.println("\nWiFi connected at IP ");
   Serial.print(WiFi.localIP());
 
   Blynk.begin(auth, ssid, pass);
@@ -164,98 +209,32 @@ void setup() {
   memcpy(peerInfo.peer_addr, peerAddress, 6);
   peerInfo.channel = 0;  
   peerInfo.encrypt = false;
-
-  // Add peer        
-  if (esp_now_add_peer(&peerInfo) != ESP_OK){
+  if (esp_now_add_peer(&peerInfo) != ESP_OK) {
     Serial.println("Failed to add peer");
     return;
   }
+
+  // Set timer to call sendSensorData every 2 seconds
+  timer.setInterval(2000L, sendSensorData);
 }
 
 void loop() {
   Blynk.run();
+  timer.run();  // Runs the Blynk timer
   timeClient.update();
 
-  // Read sensor data
-  sensorData.temp = dht.readTemperature();
-  float humidity = dht.readHumidity();
-
-  int lightValue = analogRead(LDR_PIN);
-  sensorData.light = map(lightValue, 0, 4095, 1000, 0);
-  sensorData.motion = digitalRead(MOTION_PIN);
-
-  sensorData.gas_level = analogRead(GAS_SENSOR_PIN);
-
-  float currentSensorValue = analogRead(CURRENT_SENSOR_PIN);
-  // Convert the analog reading to voltage
-  float sensorVoltage = (currentSensorValue * VREF) / ADC_RESOLUTION;
-  sensorData.current = (sensorVoltage - NO_CURRENT_VOLTAGE) * 0.707 / SENSOR_SENSITIVITY;
-  float overallPower = sensorData.current*220;
-
-  float currentSensorValue2 = analogRead(CURRENT_SENSOR_PIN2);
-  // Convert the analog reading to voltage
-  float sensorVoltage2 = (currentSensorValue2 * VREF) / ADC_RESOLUTION;
-  float applianceCurrent2 = (sensorVoltage2 - NO_CURRENT_VOLTAGE) * 0.707 / SENSOR_SENSITIVITY;
-  float appliancePower2 = applianceCurrent2*220;
-
-  float currentSensorValue3 = analogRead(CURRENT_SENSOR_PIN3);
-  // Convert the analog reading to voltage
-  float sensorVoltage3 = (currentSensorValue3 * VREF) / ADC_RESOLUTION;
-  float applianceCurrent3 = (sensorVoltage3 - NO_CURRENT_VOLTAGE) * 0.707 / SENSOR_SENSITIVITY;
-  float appliancePower3 = applianceCurrent3*220;
-
-  // Get hour of the day
-  sensorData.hour = timeClient.getHours();
-
-  //Wait until new tag is available
+  // Check RFID
   while (getID()) {
-    if (tagID == MasterTag && faceUnlockEnabled == 0) {  // Only unlock if face unlock is disabled
+    if (tagID == MasterTag && faceUnlockEnabled == 0) {
       Serial.println("RFID MATCH, Door OPENED");
-      doorLockState = 1;  // Set door to unlocked state
+      doorLockState = 1;
       digitalWrite(DOOR_LOCK_PIN, HIGH);  // Unlock the door
     } else {
       Serial.println("RFID NO MATCH or Face Unlock ACTIVE, Door remains CLOSED");
-      doorLockState = 0;  // Keep the door locked
-      digitalWrite(DOOR_LOCK_PIN, LOW);   // Lock the door
+      doorLockState = 0;
+      digitalWrite(DOOR_LOCK_PIN, LOW);  // Lock the door
     }
   }
-
-
-  // Send sensor data to Fuzzy Logic ESP32
-  esp_err_t result = esp_now_send(peerAddress, (const uint8_t *) &sensorData, sizeof(sensorData));
-  
-  if (result == ESP_OK) {
-    Serial.println("Sent sensor data");
-  } else {
-    Serial.println(" Error sending sensor data");
-  }
-  int motionSensorState = digitalRead(MOTION_PIN);  // Read the state of the motion sensor
-  int flameSensorState = digitalRead(FLAME_SENSOR_PIN);
-
-  // Update the Blynk LED widget
-  if (motionSensorState == HIGH) {
-    Blynk.virtualWrite(V7, 255);  // Turn on the LED widget (fully lit)
-  } else {
-    Blynk.virtualWrite(V7, 0);    // Turn off the LED widget
-  }
-
-  // Update Blynk interface (example)
-  Blynk.virtualWrite(V1, dht.readTemperature());
-  Blynk.virtualWrite(V2, sensorData.light);
-  Blynk.virtualWrite(V3, overallPower); 
-  Blynk.virtualWrite(V4, flameSensorState);
-  Blynk.virtualWrite(V5, humidity);
-  Blynk.virtualWrite(V6, sensorData.gas_level);
-  Blynk.virtualWrite(V8, doorLockState);
-  Blynk.virtualWrite(V10, faceUnlockState);
-  Blynk.virtualWrite(V11, appliancePower2);
-  Blynk.virtualWrite(V12, appliancePower3);
-  Blynk.virtualWrite(V17, sensorData.lightCommand);
-  Blynk.virtualWrite(V18, sensorData.fanCommand);
-  Blynk.virtualWrite(V0, sensorData.alarmCommand);
-  Blynk.virtualWrite(V20, sensorData.energyCommand);
-
-  delay(2000); 
 }
 
 boolean getID() 
@@ -277,6 +256,21 @@ boolean getID()
   return true;
 }
 
+//Read Face Unlock State from ESP32CAM
+BLYNK_WRITE(V10) {
+  int faceUnlockState = param.asInt();
+  
+  if (faceUnlockState == 1) {
+    Serial.println("Face Unlock ENABLED, Door OPENED");
+    faceUnlockEnabled = 1;  // Face unlock is now active
+    doorLockState = 1;  // Set door to unlocked state
+    digitalWrite(DOOR_LOCK_PIN, HIGH);  // Unlock the door
+  } else {
+    Serial.println("Face Unlock DISABLED, Control released to RFID/Blynk");
+    faceUnlockEnabled = 0;  // Face unlock is now inactive
+    // We don't lock/close the door immediately; RFID/Blynk can take over.
+  }
+}
 
 // Function to control Bulb 1
 BLYNK_WRITE(V13) {
@@ -321,21 +315,5 @@ BLYNK_WRITE(V8) {
     }
   } else {
     Serial.println("Face Unlock is active, Blynk cannot control the door");
-  }
-}
-
-//Read Face Unlock State from ESP32CAM
-BLYNK_WRITE(V10) {
-  int faceUnlockState = param.asInt();
-  
-  if (faceUnlockState == 1) {
-    Serial.println("Face Unlock ENABLED, Door OPENED");
-    faceUnlockEnabled = 1;  // Face unlock is now active
-    doorLockState = 1;  // Set door to unlocked state
-    digitalWrite(DOOR_LOCK_PIN, HIGH);  // Unlock the door
-  } else {
-    Serial.println("Face Unlock DISABLED, Control released to RFID/Blynk");
-    faceUnlockEnabled = 0;  // Face unlock is now inactive
-    // We don't lock/close the door immediately; RFID/Blynk can take over.
   }
 }
